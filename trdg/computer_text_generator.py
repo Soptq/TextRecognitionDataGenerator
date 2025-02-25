@@ -85,14 +85,14 @@ def render_latex(formula, fontsize=32, background="black", color="while"):
     plt.figure(facecolor=background)
     plt.rc('text', usetex=True)
     plt.rc('font', family='serif')
-    mpl.rcParams['text.latex.preamble'] = r'\usepackage{{amsmath}}'
+    mpl.rcParams['text.latex.preamble'] = r'\usepackage{{amsmath}} \usepackage{{amssymb}}'
     plt.axis('off')
     plt.text(0.0, 0, f'Hq {formula}', size=fontsize, color=tuple([c / 255 for c in color]))
     plt.savefig(buf, format='png', bbox_inches='tight')
     plt.close()
 
     im = Image.open(buf)
-    bbox = im.convert("RGB").getbbox(alpha_only=True)
+    bbox = im.convert("RGB").getbbox()
     bbox = (bbox[0] + 60, bbox[1] - 5, bbox[2] + 5, bbox[3] + 5)
     im = im.crop(bbox).convert("RGBA")
     # set black background to transparent

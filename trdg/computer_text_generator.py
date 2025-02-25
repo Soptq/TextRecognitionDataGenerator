@@ -1,8 +1,15 @@
+import io
+import math
+import re
 import random as rnd
 from typing import Tuple
-from PIL import Image, ImageColor, ImageDraw, ImageFilter, ImageFont
+
+import numpy as np
+from PIL import Image, ImageColor, ImageDraw, ImageFilter, ImageFont, ImageChops
 
 from trdg.utils import get_text_width, get_text_height
+import matplotlib as mpl
+import matplotlib.pyplot as plt
 
 # Thai Unicode reference: https://jrgraphix.net/r/Unicode/0E00-0E7F
 TH_TONE_MARKS = [
@@ -31,6 +38,7 @@ def generate(
     word_split: bool,
     stroke_width: int = 0,
     stroke_fill: str = "#282828",
+    max_width: int = 0,
 ) -> Tuple:
     if orientation == 0:
         return _generate_horizontal_text(
@@ -44,6 +52,7 @@ def generate(
             word_split,
             stroke_width,
             stroke_fill,
+            max_width,
         )
     elif orientation == 1:
         return _generate_vertical_text(
@@ -71,6 +80,30 @@ def _compute_character_width(image_font: ImageFont, character: str) -> int:
     return round(image_font.getlength(character))
 
 
+def render_latex(formula, fontsize=32, background="black", color="while"):
+    buf = io.BytesIO()
+    plt.figure(facecolor=background)
+    plt.rc('text', usetex=True)
+    plt.rc('font', family='serif')
+    mpl.rcParams['text.latex.preamble'] = r'\usepackage{{amsmath}}'
+    plt.axis('off')
+    plt.text(0.0, 0, f'Hq {formula}', size=fontsize, color=tuple([c / 255 for c in color]))
+    plt.savefig(buf, format='png', bbox_inches='tight')
+    plt.close()
+
+    im = Image.open(buf)
+    bbox = im.convert("RGB").getbbox(alpha_only=True)
+    bbox = (bbox[0] + 60, bbox[1] - 5, bbox[2] + 5, bbox[3] + 5)
+    im = im.crop(bbox).convert("RGBA")
+    # set black background to transparent
+    data = np.array(im)
+    r, g, b, a = data[:, :, 0], data[:, :, 1], data[:, :, 2], data[:, :, 3]
+    black_areas = (r == 0) & (g == 0) & (b == 0)
+    data[:, :, 3][black_areas] = 0
+    im = Image.fromarray(data)
+    return im
+
+
 def _generate_horizontal_text(
     text: str,
     font: str,
@@ -82,36 +115,9 @@ def _generate_horizontal_text(
     word_split: bool,
     stroke_width: int = 0,
     stroke_fill: str = "#282828",
+    max_width: int = 0,
 ) -> Tuple:
-    image_font = ImageFont.truetype(font=font, size=font_size)
-
-    space_width = int(get_text_width(image_font, " ") * space_width)
-
-    if word_split:
-        splitted_text = []
-        for w in text.split(" "):
-            splitted_text.append(w)
-            splitted_text.append(" ")
-        splitted_text.pop()
-    else:
-        splitted_text = text
-
-    piece_widths = [
-        _compute_character_width(image_font, p) if p != " " else space_width
-        for p in splitted_text
-    ]
-    text_width = sum(piece_widths)
-    if not word_split:
-        text_width += character_spacing * (len(text) - 1)
-
-    text_height = max([get_text_height(image_font, p) for p in splitted_text])
-
-    txt_img = Image.new("RGBA", (text_width, text_height), (0, 0, 0, 0))
-    txt_mask = Image.new("RGB", (text_width, text_height), (0, 0, 0))
-
-    txt_img_draw = ImageDraw.Draw(txt_img)
-    txt_mask_draw = ImageDraw.Draw(txt_mask, mode="RGB")
-    txt_mask_draw.fontmode = "1"
+    assert max_width >= 0
 
     colors = [ImageColor.getrgb(c) for c in text_color.split(",")]
     c1, c2 = colors[0], colors[-1]
@@ -122,6 +128,87 @@ def _generate_horizontal_text(
         rnd.randint(min(c1[2], c2[2]), max(c1[2], c2[2])),
     )
 
+    # preprocess
+    text = text.replace("$$", "$")
+    text = text.replace("\\[", "$")
+    text = text.replace("\\]", "$")
+    text = text.replace("\n", " ")
+
+    # math support
+    math_scale = 1.0
+    rendered_math = []
+    math_expressions = list(set(re.findall(r"\$.*?\$", text)))
+    for expr in math_expressions:
+        text = text.replace(expr, f"<|{len(rendered_math)}|>")
+        rendered_math.append(render_latex(expr, fontsize=font_size, background=(0, 0, 0), color=fill))
+
+    image_font = ImageFont.truetype(font=font, size=font_size)
+
+    space_width = int(get_text_width(image_font, " ") * space_width)
+
+    if word_split:
+        splitted_text = []
+        for w in text.split(" "):
+            if "<|" in w and "|>" in w:
+                start = w.find("<|")
+                end = w.find("|>")
+                if start > 0:
+                    splitted_text.append(w[:start])
+                splitted_text.append(w[start:end + 2])
+                if end + 2 < len(w):
+                    splitted_text.append(w[end + 2:])
+                splitted_text.append(" ")
+            else:
+                splitted_text.append(w)
+                splitted_text.append(" ")
+        splitted_text.pop()
+    else:
+        splitted_text = text
+
+    def lut_width(c):
+        if c == " ":
+            return space_width
+        if c.startswith("<|") and c.endswith("|>"):
+            math_id = int(c[2:-2])
+            return math.ceil(rendered_math[math_id].size[0] * math_scale)
+        return _compute_character_width(image_font, c)
+
+    def lut_height(c):
+        if c.startswith("<|") and c.endswith("|>"):
+            math_id = int(c[2:-2])
+            return math.ceil(rendered_math[math_id].size[1] * math_scale)
+        return get_text_height(image_font, p)
+
+    piece_widths = [lut_width(c) for c in splitted_text]
+
+    # get lines
+    line_width = 0
+    line_split_text = [[]]
+    for p in splitted_text:
+        w = lut_width(p)
+        if line_width + w > max_width:
+            line_split_text.append([p])
+            line_width = w
+        else:
+            line_split_text[-1].append(p)
+            line_width += w
+    line_piece_widths = [[lut_width(p) for p in split_text] for split_text in line_split_text]
+
+    text_width = min(sum(piece_widths), max_width)
+    if not word_split:
+        text_width += character_spacing * (len(text) - 1)
+
+    text_height_baseline = lut_height("Hq")
+    text_height = [max([lut_height(p) for p in line]) for line in line_split_text]
+    text_height = [0] + np.cumsum(text_height).tolist()
+
+    txt_img = Image.new("RGBA", (text_width, text_height[-1]), (0, 0, 0, 0))
+    txt_mask = Image.new("RGB", (text_width, text_height[-1]), (0, 0, 0))
+
+    txt_img_draw = ImageDraw.Draw(txt_img)
+    txt_mask_draw = ImageDraw.Draw(txt_mask, mode="RGB")
+    txt_mask_draw.fontmode = "1"
+
     stroke_colors = [ImageColor.getrgb(c) for c in stroke_fill.split(",")]
     stroke_c1, stroke_c2 = stroke_colors[0], stroke_colors[-1]
 
@@ -131,23 +218,41 @@ def _generate_horizontal_text(
         rnd.randint(min(stroke_c1[2], stroke_c2[2]), max(stroke_c1[2], stroke_c2[2])),
     )
 
-    for i, p in enumerate(splitted_text):
-        txt_img_draw.text(
-            (sum(piece_widths[0:i]) + i * character_spacing * int(not word_split), 0),
-            p,
-            fill=fill,
-            font=image_font,
-            stroke_width=stroke_width,
-            stroke_fill=stroke_fill,
-        )
-        txt_mask_draw.text(
-            (sum(piece_widths[0:i]) + i * character_spacing * int(not word_split), 0),
-            p,
-            fill=((i + 1) // (255 * 255), (i + 1) // 255, (i + 1) % 255),
-            font=image_font,
-            stroke_width=stroke_width,
-            stroke_fill=stroke_fill,
-        )
+    for i, (line, p_weights) in enumerate(zip(line_split_text, line_piece_widths)):
+        for j, p in enumerate(line):
+            if p.startswith("<|") and p.endswith("|>"):
+                math_id = int(p[2:-2])
+                if j == 0 and len(line) == 1 and rendered_math[math_id].size[0] > max_width:
+                    new_height = int(max_width * rendered_math[math_id].size[1] / rendered_math[math_id].size[0])
+                    resized_math = rendered_math[math_id].resize((max_width, new_height))
+                    txt_img.paste(
+                        resized_math,
+                        (sum(p_weights[0:j]) + j * character_spacing, text_height[i]),
+                    )
+                else:
+                    txt_img.paste(
+                        rendered_math[math_id],
+                        (sum(p_weights[0:j]) + j * character_spacing, text_height[i]),
+                    )
+            else:
+                line_height = text_height[i + 1] - text_height[i]
+                plot_height = text_height[i] + (line_height - text_height_baseline) // 2
+                txt_img_draw.text(
+                    (sum(p_weights[0:j]) + j * character_spacing * int(not word_split), plot_height),
+                    p,
+                    fill=fill,
+                    font=image_font,
+                    stroke_width=stroke_width,
+                    stroke_fill=stroke_fill,
+                )
+                txt_mask_draw.text(
+                    (sum(p_weights[0:j]) + j * character_spacing * int(not word_split), plot_height),
+                    p,
+                    fill=((j + 1) // (255 * 255), (j + 1) // 255, (j + 1) % 255),
+                    font=image_font,
+                    stroke_width=stroke_width,
+                    stroke_fill=stroke_fill,
+                )
 
     if fit:
         return txt_img.crop(txt_img.getbbox()), txt_mask.crop(txt_img.getbbox())

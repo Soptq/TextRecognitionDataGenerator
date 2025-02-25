@@ -1,4 +1,5 @@
 import os
+import random
 import random as rnd
 
 from PIL import Image, ImageFilter, ImageStat
@@ -81,6 +82,7 @@ class FakeTextDataGenerator(object):
                 word_split,
                 stroke_width,
                 stroke_fill,
+                max_width=width,
             )
         random_angle = rnd.randint(0 - skewing_angle, skewing_angle)
 
@@ -126,18 +128,19 @@ class FakeTextDataGenerator(object):
 
         # Horizontal text
         if orientation == 0:
-            new_width = int(
-                distorted_img.size[0]
-                * (float(size - vertical_margin) / float(distorted_img.size[1]))
-            )
-            resized_img = distorted_img.resize(
-                (new_width, size - vertical_margin), Image.Resampling.LANCZOS
-            )
-            resized_mask = distorted_mask.resize(
-                (new_width, size - vertical_margin), Image.Resampling.NEAREST
-            )
-            background_width = width if width > 0 else new_width + horizontal_margin
-            background_height = size
+            new_height = int(distorted_img.size[1] * (float(width - horizontal_margin) / float(distorted_img.size[0])))
+            if distorted_img.size[0] > width - horizontal_margin:
+                resized_img = distorted_img.resize(
+                    (width - horizontal_margin, new_height), Image.Resampling.LANCZOS
+                )
+                resized_mask = distorted_mask.resize(
+                    (width - horizontal_margin, new_height), Image.Resampling.NEAREST
+                )
+            else:
+                resized_img = distorted_img
+                resized_mask = distorted_mask
+            background_width = width
+            background_height = new_height + vertical_margin
         # Vertical text
         elif orientation == 1:
             new_height = int(
@@ -203,19 +206,23 @@ class FakeTextDataGenerator(object):
         #############################
 
         new_text_width, _ = resized_img.size
-
         if alignment == 0 or width == -1:
             background_img.paste(resized_img, (margin_left, margin_top), resized_img)
             background_mask.paste(resized_mask, (margin_left, margin_top))
         elif alignment == 1:
+            content_x, content_y = resized_img.size
+            available_x = background_width - content_x
+            available_y = background_height - content_y
+            plot_x = random.randint(0, available_x)
+            plot_y = random.randint(0, available_y)
             background_img.paste(
                 resized_img,
-                (int(background_width / 2 - new_text_width / 2), margin_top),
+                (plot_x, plot_y),
                 resized_img,
             )
             background_mask.paste(
                 resized_mask,
-                (int(background_width / 2 - new_text_width / 2), margin_top),
+                (plot_x, plot_y),
             )
         else:
             background_img.paste(

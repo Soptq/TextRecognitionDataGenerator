@@ -93,7 +93,7 @@ def render_latex(formula, fontsize=32, background="black", color="while"):
 
     im = Image.open(buf)
     bbox = im.convert("RGB").getbbox()
-    bbox = (bbox[0] + 60, bbox[1] - 5, bbox[2] + 5, bbox[3] + 5)
+    bbox = (bbox[0] + 60 * fontsize / 32, bbox[1] - 5 * fontsize / 32, bbox[2] + 5 * fontsize / 32, bbox[3] + 5 * fontsize / 32)
     im = im.crop(bbox).convert("RGBA")
     # set black background to transparent
     data = np.array(im)

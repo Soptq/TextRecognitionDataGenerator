@@ -41,6 +41,7 @@ class FakeTextDataGenerator(object):
         is_handwritten: bool,
         name_format: int,
         width: int,
+        text_width: int,
         alignment: int,
         text_color: str,
         orientation: int,
@@ -82,7 +83,7 @@ class FakeTextDataGenerator(object):
                 word_split,
                 stroke_width,
                 stroke_fill,
-                max_width=width,
+                max_width=text_width,
             )
         random_angle = rnd.randint(0 - skewing_angle, skewing_angle)
 
@@ -140,7 +141,7 @@ class FakeTextDataGenerator(object):
                 resized_img = distorted_img
                 resized_mask = distorted_mask
             background_width = width
-            background_height = new_height + vertical_margin
+            background_height = int((new_height + vertical_margin) * 1.5)
         # Vertical text
         elif orientation == 1:
             new_height = int(

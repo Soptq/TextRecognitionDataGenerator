@@ -28,6 +28,7 @@ class GeneratorFromStrings:
         distorsion_orientation: int = 0,
         is_handwritten: bool = False,
         width: int = -1,
+        text_width: int = -1,
         alignment: int = 1,
         text_color: str = "#282828",
         orientation: int = 0,
@@ -74,6 +75,7 @@ class GeneratorFromStrings:
         self.distorsion_orientation = distorsion_orientation
         self.is_handwritten = is_handwritten
         self.width = width
+        self.text_width = text_width
         self.alignment = alignment
         self.text_color = text_color
         self.orientation = orientation
@@ -118,6 +120,7 @@ class GeneratorFromStrings:
                 self.is_handwritten,
                 0,
                 self.width,
+                self.text_width,
                 self.alignment,
                 self.text_color,
                 self.orientation,

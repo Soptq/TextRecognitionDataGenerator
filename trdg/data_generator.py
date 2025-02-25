@@ -141,7 +141,7 @@ class FakeTextDataGenerator(object):
                 resized_img = distorted_img
                 resized_mask = distorted_mask
             background_width = width
-            background_height = int((new_height + vertical_margin) * 1.5)
+            background_height = max(int((new_height + vertical_margin) * 1.5), int(background_width * 0.75))
         # Vertical text
         elif orientation == 1:
             new_height = int(

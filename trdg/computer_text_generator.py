@@ -82,11 +82,18 @@ def _compute_character_width(image_font: ImageFont, character: str) -> int:
     return round(image_font.getlength(character))
 
 
-def render_asy(asy_code, max_width, background="black", color="white"):
+def render_asy(asy_code, max_width, background="black", color="white", import_olympiad=False):
     asy_code = asy_code[5:-6]  # Remove [asy] and [/asy]
+
+    if import_olympiad:
+        asy_code = "import olympiad;\n" + asy_code
+
+    asy_code = "import geometry;\nimport graph;\n" + asy_code
 
     with open('temp.asy', 'w') as f:
         f.write(asy_code)
+
+    img = None
 
     try:
         subprocess.run(['asy', 'temp.asy'], check=True)
@@ -109,9 +116,9 @@ def render_asy(asy_code, max_width, background="black", color="white"):
         img = Image.fromarray(data)
 
     except subprocess.CalledProcessError as e:
-        print(f"Error running Asymptote: {e}")
-    finally:
         pass
+        # print(f"Error running Asymptote: {e}")
+    finally:
         for file in ['temp.asy', 'temp.png']:
             if os.path.exists(file):
                 os.remove(file)
@@ -119,27 +126,43 @@ def render_asy(asy_code, max_width, background="black", color="white"):
     return img
 
 
-def render_latex(formula, fontsize=32, background="black", color="white"):
-    buf = io.BytesIO()
-    plt.figure(facecolor=background)
-    plt.rc('text', usetex=True)
-    plt.rc('font', family='serif')
-    mpl.rcParams['text.latex.preamble'] = r'\usepackage{{amsmath}} \usepackage{{amssymb}}'
-    plt.axis('off')
-    plt.text(0.0, 0, f'Hq {formula}', size=fontsize, color=tuple([c / 255 for c in color]))
-    plt.savefig(buf, format='png', bbox_inches='tight')
-    plt.close()
+def render_latex(formula, max_width, fontsize=32, background="black", color="white"):
+    if "\n" in formula:
+        formula = formula.replace("\n", " ")
 
-    im = Image.open(buf)
-    bbox = im.convert("RGB").getbbox()
-    bbox = (bbox[0] + 60 * fontsize / 32, bbox[1] - 5 * fontsize / 32, bbox[2] + 5 * fontsize / 32, bbox[3] + 5 * fontsize / 32)
-    im = im.crop(bbox).convert("RGBA")
-    # set black background to transparent
-    data = np.array(im)
-    r, g, b, a = data[:, :, 0], data[:, :, 1], data[:, :, 2], data[:, :, 3]
-    black_areas = (r == 0) & (g == 0) & (b == 0)
-    data[:, :, 3][black_areas] = 0
-    im = Image.fromarray(data)
+    if "\overarc" in formula:
+        formula = formula.replace("\overarc", "\wideparen")
+
+    im = None
+
+    try:
+        buf = io.BytesIO()
+        plt.figure(facecolor=background)
+        plt.rc('text', usetex=True)
+        plt.rc('font', family='serif')
+        mpl.rcParams['text.latex.preamble'] = r'\usepackage{{amsmath}} \usepackage{{amssymb}} \usepackage{{yhmath}}'
+        plt.axis('off')
+        plt.text(0.0, 0, f'Hq {formula}', size=fontsize, color=tuple([c / 255 for c in color]))
+        plt.savefig(buf, format='png', bbox_inches='tight')
+        plt.close()
+
+        im = Image.open(buf)
+        bbox = im.convert("RGB").getbbox()
+        bbox = (bbox[0] + 60 * fontsize / 32, bbox[1] - 5 * fontsize / 32, bbox[2] + 5 * fontsize / 32, bbox[3] + 5 * fontsize / 32)
+        im = im.crop(bbox).convert("RGBA")
+        # set black background to transparent
+        data = np.array(im)
+        r, g, b, a = data[:, :, 0], data[:, :, 1], data[:, :, 2], data[:, :, 3]
+        black_areas = (r == 0) & (g == 0) & (b == 0)
+        data[:, :, 3][black_areas] = 0
+        im = Image.fromarray(data)
+
+        if im.size[0] > max_width:
+            new_height = int(max_width * im.size[1] / im.size[0])
+            im = im.resize((max_width, new_height), Image.LANCZOS)
+    except Exception as e:
+        pass
+
     return im
 
 
@@ -168,21 +191,29 @@ def _generate_horizontal_text(
     )
 
     # preprocess
-    text = text.replace("$$", "$")
+    # text = text.replace("$$", "$")
+    text = re.sub(r'(?<!\\)\$\$', '$', text)
     text = text.replace("\\[", "$")
     text = text.replace("\\]", "$")
 
     # math and asy code support
     render_scale = 1.0
     rendered = []
-    math_expressions = list(set(re.findall(r"\$.*?\$", text, re.DOTALL)))
-    asy_codes = list(set(re.findall(r"\[asy\].*?\[/asy\]", text, re.DOTALL)))
-    for expr in math_expressions:
-        text = text.replace(expr, f"<|{len(rendered)}|>")
-        rendered.append(render_latex(expr, fontsize=font_size, background=(0, 0, 0), color=fill))
+    # asy_codes = list(set(re.findall(r"\[asy\].*?\[/asy\]", text, re.DOTALL)))
+    asy_codes = []
+    math_expressions = list(set(re.findall(r"(?<!\\)\$.*?(?<!\\)\$", text, re.DOTALL)))
     for asy_code in asy_codes:
+        rendered_img = render_asy(asy_code, max_width, background=(0, 0, 0), color=fill, import_olympiad=False)
+        if rendered_img is None:
+            continue
         text = text.replace(asy_code, f"<|{len(rendered)}|>")
-        rendered.append(render_asy(asy_code, max_width, background=(0, 0, 0), color=fill))
+        rendered.append(rendered_img)
+    for expr in math_expressions:
+        rendered_img = render_latex(expr, max_width, fontsize=font_size, background=(0, 0, 0), color=fill)
+        if rendered_img is None:
+            continue
+        text = text.replace(expr, f" <|{len(rendered)}|> ")
+        rendered.append(rendered_img)
 
     text = text.replace("\n", " ")
 
@@ -220,7 +251,7 @@ def _generate_horizontal_text(
         if c.startswith("<|") and c.endswith("|>"):
             math_id = int(c[2:-2])
             return math.ceil(rendered[math_id].size[1] * render_scale)
-        return get_text_height(image_font, p)
+        return get_text_height(image_font, c)
 
     piece_widths = [lut_width(c) for c in splitted_text]
 

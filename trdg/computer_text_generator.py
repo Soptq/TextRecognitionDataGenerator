@@ -1,3 +1,5 @@
+import os
+import subprocess
 import io
 import math
 import re
@@ -80,7 +82,44 @@ def _compute_character_width(image_font: ImageFont, character: str) -> int:
     return round(image_font.getlength(character))
 
 
-def render_latex(formula, fontsize=32, background="black", color="while"):
+def render_asy(asy_code, max_width, background="black", color="white"):
+    asy_code = asy_code[5:-6]  # Remove [asy] and [/asy]
+
+    with open('temp.asy', 'w') as f:
+        f.write(asy_code)
+
+    try:
+        subprocess.run(['asy', 'temp.asy'], check=True)
+        img = Image.open('temp.eps')
+        scale = max_width // img.size[0] + 1
+        img.load(scale=scale)
+        img = img.convert('RGBA')
+
+        img = img.resize((max_width // 2, int(max_width * img.size[1] / img.size[0]) // 2), Image.LANCZOS)
+        bg = Image.new('RGBA', (max_width, img.size[1]), (255, 255, 255))
+        bg.paste(img, (max_width // 2 - img.size[0] // 2, 0))
+        img = bg
+
+
+        # set while background to transparent
+        data = np.array(img)
+        r, g, b, a = data[:, :, 0], data[:, :, 1], data[:, :, 2], data[:, :, 3]
+        white_areas = (r == 255) & (g == 255) & (b == 255)
+        data[:, :, 3][white_areas] = 0
+        img = Image.fromarray(data)
+
+    except subprocess.CalledProcessError as e:
+        print(f"Error running Asymptote: {e}")
+    finally:
+        pass
+        for file in ['temp.asy', 'temp.png']:
+            if os.path.exists(file):
+                os.remove(file)
+
+    return img
+
+
+def render_latex(formula, fontsize=32, background="black", color="white"):
     buf = io.BytesIO()
     plt.figure(facecolor=background)
     plt.rc('text', usetex=True)
@@ -132,18 +171,22 @@ def _generate_horizontal_text(
     text = text.replace("$$", "$")
     text = text.replace("\\[", "$")
     text = text.replace("\\]", "$")
+
+    # math and asy code support
+    render_scale = 1.0
+    rendered = []
+    math_expressions = list(set(re.findall(r"\$.*?\$", text, re.DOTALL)))
+    asy_codes = list(set(re.findall(r"\[asy\].*?\[/asy\]", text, re.DOTALL)))
+    for expr in math_expressions:
+        text = text.replace(expr, f" <|{len(rendered)}|> ")
+        rendered.append(render_latex(expr, fontsize=font_size, background=(0, 0, 0), color=fill))
+    for asy_code in asy_codes:
+        text = text.replace(asy_code, f" <|{len(rendered)}|> ")
+        rendered.append(render_asy(asy_code, max_width, background=(0, 0, 0), color=fill))
+
     text = text.replace("\n", " ")
 
-    # math support
-    math_scale = 1.0
-    rendered_math = []
-    math_expressions = list(set(re.findall(r"\$.*?\$", text)))
-    for expr in math_expressions:
-        text = text.replace(expr, f"<|{len(rendered_math)}|>")
-        rendered_math.append(render_latex(expr, fontsize=font_size, background=(0, 0, 0), color=fill))
-
     image_font = ImageFont.truetype(font=font, size=font_size)
-
     space_width = int(get_text_width(image_font, " ") * space_width)
 
     if word_split:
@@ -170,13 +213,13 @@ def _generate_horizontal_text(
             return space_width
         if c.startswith("<|") and c.endswith("|>"):
             math_id = int(c[2:-2])
-            return math.ceil(rendered_math[math_id].size[0] * math_scale)
+            return math.ceil(rendered[math_id].size[0] * render_scale)
         return _compute_character_width(image_font, c)
 
     def lut_height(c):
         if c.startswith("<|") and c.endswith("|>"):
             math_id = int(c[2:-2])
-            return math.ceil(rendered_math[math_id].size[1] * math_scale)
+            return math.ceil(rendered[math_id].size[1] * render_scale)
         return get_text_height(image_font, p)
 
     piece_widths = [lut_width(c) for c in splitted_text]
@@ -222,16 +265,16 @@ def _generate_horizontal_text(
         for j, p in enumerate(line):
             if p.startswith("<|") and p.endswith("|>"):
                 math_id = int(p[2:-2])
-                if j == 0 and len(line) == 1 and rendered_math[math_id].size[0] > max_width:
-                    new_height = int(max_width * rendered_math[math_id].size[1] / rendered_math[math_id].size[0])
-                    resized_math = rendered_math[math_id].resize((max_width, new_height))
+                if j == 0 and len(line) == 1 and rendered[math_id].size[0] > max_width:
+                    new_height = int(max_width * rendered[math_id].size[1] / rendered[math_id].size[0])
+                    resized_math = rendered[math_id].resize((max_width, new_height))
                     txt_img.paste(
                         resized_math,
                         (sum(p_weights[0:j]) + j * character_spacing, text_height[i]),
                     )
                 else:
                     txt_img.paste(
-                        rendered_math[math_id],
+                        rendered[math_id],
                         (sum(p_weights[0:j]) + j * character_spacing, text_height[i]),
                     )
             else:

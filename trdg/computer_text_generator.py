@@ -178,10 +178,10 @@ def _generate_horizontal_text(
     math_expressions = list(set(re.findall(r"\$.*?\$", text, re.DOTALL)))
     asy_codes = list(set(re.findall(r"\[asy\].*?\[/asy\]", text, re.DOTALL)))
     for expr in math_expressions:
-        text = text.replace(expr, f" <|{len(rendered)}|> ")
+        text = text.replace(expr, f"<|{len(rendered)}|>")
         rendered.append(render_latex(expr, fontsize=font_size, background=(0, 0, 0), color=fill))
     for asy_code in asy_codes:
-        text = text.replace(asy_code, f" <|{len(rendered)}|> ")
+        text = text.replace(asy_code, f"<|{len(rendered)}|>")
         rendered.append(render_asy(asy_code, max_width, background=(0, 0, 0), color=fill))
 
     text = text.replace("\n", " ")
